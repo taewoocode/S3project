@@ -1,77 +1,94 @@
 package com.example.s3test.service;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.SdkClientException;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
+
+import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.*;
+
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class S3Service {
+
     @Value("${cloud.aws.s3.bucket}")
     private String bucket;
-    private final AmazonS3 amazonS3;
 
-    public String uploadFile(MultipartFile multipartFile) throws IOException {
-        String folder = "";
-        String fileName = multipartFile.getOriginalFilename();
+    private final S3AsyncClient s3Client;
+    private static final long PART_SIZE = 5 * 1024 * 1024; // 5MB
 
-        //파일 형식 구하기
-        String ext = fileName.split("\\.")[1];
-        String contentType = "";
+    public void uploadFile(String key, File file) throws Exception {
+        CreateMultipartUploadRequest createRequest = CreateMultipartUploadRequest.builder()
+            .bucket(bucket)
+            .key(key)
+            .build();
 
-        //content type을 지정해서 올려주지 않으면 자동으로 "application/octet-stream"으로 고정이 되서 링크 클릭시 웹에서 열리는게 아니라 자동 다운이 시작됨.
-        switch (ext) {
-            case "jpeg":
-                contentType = "image/jpeg";
-                folder = "img/";
-                break;
-            case "png":
-                contentType = "image/png";
-                folder = "img/";
-                break;
-            case "txt":
-                contentType = "text/plain";
-                folder = "txt/";
-                break;
-            case "csv":
-                contentType = "text/csv";
-                folder = "csv/";
-                break;
+        String uploadId = s3Client.createMultipartUpload(createRequest).get().uploadId();
+
+        List<CompletableFuture<CompletedPart>> futures = new ArrayList<>();
+
+        try (FileInputStream inputStream = new FileInputStream(file)) {
+            long fileSize = file.length();
+            int partNumber = 1;
+            byte[] buffer = new byte[(int) PART_SIZE];
+            int bytesRead;
+            long offset = 0;
+
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                final int currentPartNumber = partNumber++;
+                final byte[] partData = Arrays.copyOf(buffer, bytesRead);
+
+                UploadPartRequest uploadRequest = getUploadPartRequest(key, uploadId,
+                    currentPartNumber, partData);
+
+                CompletableFuture<CompletedPart> future = getFuture(uploadRequest, partData, currentPartNumber);
+                futures.add(future);
+            }
         }
 
-        try {
-            ObjectMetadata metadata = new ObjectMetadata();
-            metadata.setContentType(contentType);
-            System.out.println("folder = " + folder);
-            amazonS3.putObject(new PutObjectRequest(bucket, folder+fileName, multipartFile.getInputStream(), metadata)
-                    .withCannedAcl(CannedAccessControlList.PublicRead));
-        } catch (AmazonServiceException e) {
-            e.printStackTrace();
-        } catch (SdkClientException e) {
-            e.printStackTrace();
-        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-        //object 정보 가져오기
-        ListObjectsV2Result listObjectsV2Result = amazonS3.listObjectsV2(bucket);
-        List<S3ObjectSummary> objectSummaries = listObjectsV2Result.getObjectSummaries();
+        CompletedMultipartUpload completedMultipartUpload = CompletedMultipartUpload.builder()
+            .parts(futures.stream()
+                .map(CompletableFuture::join)
+                .sorted(Comparator.comparingInt(CompletedPart::partNumber))
+                .collect(Collectors.toList()))
+            .build();
 
-        for (S3ObjectSummary object: objectSummaries) {
-            System.out.println("object = " + object.toString());
-        }
-        return amazonS3.getUrl(bucket, fileName).toString();
+        s3Client.completeMultipartUpload(CompleteMultipartUploadRequest.builder()
+            .bucket(bucket)
+            .key(key)
+            .uploadId(uploadId)
+            .multipartUpload(completedMultipartUpload)
+            .build()).get();
     }
 
-    public List<String> allFolders() {
-        ListObjectsV2Request listObjectsV2Request = new ListObjectsV2Request().withBucketName(bucket);
-        String prefix = listObjectsV2Request.getDelimiter();
-        System.out.println(prefix);
-        return null;
+    private UploadPartRequest getUploadPartRequest(String key, String uploadId, int currentPartNumber,
+        byte[] partData) {
+        UploadPartRequest uploadRequest = UploadPartRequest.builder()
+            .bucket(bucket)
+            .key(key)
+            .uploadId(uploadId)
+            .partNumber(currentPartNumber)
+            .contentLength((long) partData.length)
+            .build();
+        return uploadRequest;
+    }
+
+    private CompletableFuture<CompletedPart> getFuture(UploadPartRequest uploadRequest, byte[] partData,
+        int currentPartNumber) {
+        return s3Client.uploadPart(uploadRequest, AsyncRequestBody.fromBytes(partData))
+            .thenApply(response -> CompletedPart.builder()
+                .partNumber(currentPartNumber)
+                .eTag(response.eTag())
+                .build());
     }
 }
