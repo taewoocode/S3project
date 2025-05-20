@@ -1,12 +1,18 @@
 plugins {
-    id 'org.springframework.boot' version '2.7.0'
+    id 'org.springframework.boot' version '3.4.2'
     id 'io.spring.dependency-management' version '1.0.11.RELEASE'
     id 'java'
 }
 
 group = 'com.example'
 version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '11'
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
 
 configurations {
     compileOnly {
@@ -24,16 +30,24 @@ dependencies {
     runtimeOnly 'com.h2database:h2'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    // https://mvnrepository.com/artifact/org.springframework.cloud/spring-cloud-starter-aws
-    implementation 'org.springframework.cloud:spring-cloud-starter-aws:2.2.6.RELEASE'
-    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
-    implementation 'org.springframework.boot:spring-boot-devtools'
 
-    //testcontainer
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+
+    // Spring Cloud AWS 3.x 이상 사용 권장 (버전은 공식 문서 참고)
+    implementation 'io.awspring.cloud:spring-cloud-aws-starter:3.0.0'
+
+    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
+    developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
     testImplementation 'org.testcontainers:junit-jupiter'
-    //localstack
     testImplementation 'org.testcontainers:localstack'
+
+    implementation platform('software.amazon.awssdk:bom:2.25.0')
+    implementation 'software.amazon.awssdk:s3'
+    implementation 'software.amazon.awssdk:netty-nio-client'
+
+    //validation
+    implementation 'jakarta.validation:jakarta.validation-api:3.0.2'
 
 }
 
