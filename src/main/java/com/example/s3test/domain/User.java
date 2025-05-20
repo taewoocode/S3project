@@ -1,4 +1,4 @@
-package com.example.s3test.model;
+package com.example.s3test.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -34,9 +34,9 @@ public class User {
     private String userName;
 
     @Builder
-    public User(String userID, String userPW, String userEmail, String userName) {
-        this.userId = userID;
-        this.userPw = userPW;
+    public User(String userId, String userPw, String userEmail, String userName) {
+        this.userId = userId;
+        this.userPw = userPw;
         this.userEmail = userEmail;
         this.userName = userName;
     }
